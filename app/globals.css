@@ -1,26 +1,66 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ana-bg: #f8fafc;
+  --kart-bg: #ffffff;
+  --yazi-ana: #0f172a;
+  --yazi-ikincil: #64748b;
+  --kenarlik: #e2e8f0;
+  --ana-turuncu: #ea580c;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* Karanlık Tema */
+.dark, [data-theme='dark'] {
+  --ana-bg: #020617;
+  --kart-bg: #0f172a;
+  --yazi-ana: #f8fafc;
+  --yazi-ikincil: #94a3b8;
+  --kenarlik: #1e293b;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--ana-bg);
+  color: var(--yazi-ana);
+  transition: background-color 0.3s ease;
 }
+
+/* ÖZELLEŞTİRİLMİŞ SCROLLBAR */
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--ana-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ana-turuncu);
+  border-radius: 10px;
+  border: 3px solid var(--ana-bg);
+}
+.custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+  .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+  
+  /* Slider için Özel CSS */
+  .slider-container { 
+    display: flex; 
+    flex-wrap: nowrap; /* Yan yana dizilmeyi zorla */
+    overflow-x: auto; /* Yatay kaydırmayı aç */
+    scroll-snap-type: x mandatory; /* Kartlara mıknatıs etkisi yap */
+    -webkit-overflow-scrolling: touch; /* iOS için akıcı kaydırma */
+    gap: 1rem; 
+    padding: 10px 5px 20px 5px;
+    cursor: grab;
+  }
+  .slider-container:active { cursor: grabbing; }
+
+  .slider-item { 
+    scroll-snap-align: start; 
+    flex: 0 0 85%; /* Mobilde ekranın %85'ini kaplasın ki diğeri gözüksün */
+  }
+
+  @media (min-width: 768px) { 
+    .slider-item { flex: 0 0 45%; } /* Masaüstünde 2.5 kart gözüksün */
+  }
+  
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
