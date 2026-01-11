@@ -177,10 +177,18 @@ export default function Home() {
     e.preventDefault();
     const { error } = await supabase.auth.signInWithOtp({ 
       email: authEmail,
-      options: { emailRedirectTo: window.location.origin }
+      options: { 
+        // BURASI ÇOK ÖNEMLİ: URL'nin sonuna slash koyduğundan emin ol
+        emailRedirectTo: window.location.origin + '/', 
+      }
     });
-    if (error) alert(error.message);
-    else { alert("Giriş bağlantısı gönderildi!"); setIsAuthModalOpen(false); }
+    
+    if (error) {
+      alert("Hata: " + error.message);
+    } else {
+      alert("Giriş bağlantısı e-postana gönderildi! Lütfen gereksiz (spam) kutusunu da kontrol et.");
+      setIsAuthModalOpen(false);
+    }
   };
 
   const handleCreateJob = async (e: React.FormEvent) => {
