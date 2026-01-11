@@ -44,13 +44,22 @@ export default function Home() {
       sliderRef.current.scrollTo({ left: scrollTo, behavior: 'smooth' });
     }
   };
-
   const fetchJobs = useCallback(async () => {
-    setLoading(true);
-    const { data } = await supabase.from("jobs").select("*").order('created_at', { ascending: false });
-    if (data) setJobs(data);
-    setLoading(false);
-  }, []);
+      try {
+        setLoading(true);
+        const { data, error } = await supabase
+          .from("jobs")
+          .select("*")
+          .order('created_at', { ascending: false });
+        
+        if (error) throw error; // Hata varsa catch bloğuna zıpla
+        if (data) setJobs(data);
+      } catch (error) {
+        console.error("İlanlar yüklenirken hata:", error);
+      } finally {
+        setLoading(false); // Hata olsa da olmasa da loading'i kapat
+      }
+    }, []);
 
   const checkBanStatus = useCallback(async (userId: string) => {
     const { data } = await supabase.from("banned_users").select("user_id").eq("user_id", userId).maybeSingle();
