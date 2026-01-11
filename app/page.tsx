@@ -65,8 +65,11 @@ export default function Home() {
     if (data) setIsBanned(true);
   }, []);
 
-  useEffect(() => {
+useEffect(() => {
+    // Koyu modu zorunlu yap
     document.documentElement.classList.add('dark');
+
+    // İlk kurulum verilerini çek
     const setup = async () => {
       const { data: { user: currentUser } } = await supabase.auth.getUser();
       if (currentUser) {
@@ -76,8 +79,28 @@ export default function Home() {
         if (favs) setFavorites(favs.map(f => f.job_id));
       }
     };
+
     setup();
     fetchJobs();
+
+    // Dinleyici: Giriş yapıldığında veya çıkış yapıldığında sayfayı yönet
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN') {
+        // Kullanıcı giriş yaptığı an sayfayı yeniler, böylece "Giriş Yap" butonu gider
+        // ve ilanlarım/favorilerim sekmeleri anında gelir.
+        window.location.reload(); 
+      }
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setFavorites([]);
+        setView('all');
+      }
+    });
+
+    // Sayfa kapandığında dinleyiciyi temizle (Performans için önemli)
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [fetchJobs, checkBanStatus]);
 
   const handleAdminAction = async (job: Job) => {
