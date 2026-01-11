@@ -44,46 +44,40 @@ export default function Home() {
       sliderRef.current.scrollTo({ left: scrollTo, behavior: 'smooth' });
     }
   };
-    const fetchJobs = useCallback(async () => {
-        try {
-          setLoading(true);
-          // Sorguyu try-catch içine aldık
-          const { data, error } = await supabase
-            .from("jobs")
-            .select("*");
-            // Eğer created_at sütunu yoksa .order kısmını şimdilik kaldırıp dene
-            // .order('created_at', { ascending: false }); 
-          
-          if (error) {
-            console.error("Supa Hatası:", error.message);
-            return;
-          }
 
-          if (data) {
-            setJobs(data);
-          }
-        } catch (err) {
-          console.error("Beklenmedik Hata:", err);
-        } finally {
-          // Hata alsa da almasa da yükleniyor yazısını kaldırır
-          setLoading(false);
-        }
-      }, []);
-
-  const checkBanStatus = useCallback(async (userId: string) => {
-    const { data } = await supabase.from("banned_users").select("user_id").eq("user_id", userId).maybeSingle();
-    if (data) setIsBanned(true);
+  const fetchJobs = useCallback(async () => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from("jobs")
+        .select("*")
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        console.error("Supa Hatası:", error.message);
+      } else if (data) {
+        setJobs(data);
+      }
+    } catch (err) {
+      console.error("Yükleme sırasında beklenmedik hata:", err);
+    } finally {
+      // Bu satır sayesinde ne hata olursa olsun "Yükleniyor" ekranı kapanır
+      setLoading(false);
+    }
   }, []);
 
-  // BİRLEŞTİRİLMİŞ VE SENKRONİZE EDİLMİŞ EFFECT
-// DÜZELTİLMİŞ USEEFFECT
+  const checkBanStatus = useCallback(async (userId: string) => {
+    try {
+      const { data } = await supabase.from("banned_users").select("user_id").eq("user_id", userId).maybeSingle();
+      if (data) setIsBanned(true);
+    } catch (err) { console.error("Ban kontrol hatası:", err); }
+  }, []);
+
   useEffect(() => {
     document.documentElement.classList.add('dark');
     
-    // Yardımcı fonksiyon: Kullanıcı verilerini ve favorileri çeker
     const fetchUserData = async (currentUser: any) => {
       if (!currentUser) return;
-      
       setUser(currentUser);
       await checkBanStatus(currentUser.id);
       
@@ -95,21 +89,16 @@ export default function Home() {
       if (favs) setFavorites(favs.map(f => f.job_id));
     };
 
-    // İlk açılış kontrolü
     const setup = async () => {
       const { data: { user: currentUser } } = await supabase.auth.getUser();
-      if (currentUser) {
-        await fetchUserData(currentUser);
-      }
+      if (currentUser) await fetchUserData(currentUser);
+      await fetchJobs();
     };
 
     setup();
-    fetchJobs();
 
-    // Giriş/Çıkış Dinleyicisi
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
-        // SAYFAYI YENİLEME (RELOAD) YOK! State'i güncelliyoruz.
         await fetchUserData(session.user);
       }
       if (event === 'SIGNED_OUT') {
@@ -119,17 +108,17 @@ export default function Home() {
       }
     });
 
-    return () => {
-      subscription.unsubscribe();
-    };
+    return () => { subscription.unsubscribe(); };
   }, [fetchJobs, checkBanStatus]);
 
   const handleDeleteJob = async (jobId: string) => {
     if (!confirm("Bu ilanı tamamen kaldırmak istediğine emin misin?")) return;
-    await supabase.from("favorites").delete().eq("job_id", jobId);
-    const { error } = await supabase.from("jobs").delete().eq("id", jobId);
-    if (error) alert("Hata: " + error.message);
-    else { alert("İlan başarıyla silindi."); fetchJobs(); }
+    try {
+        await supabase.from("favorites").delete().eq("job_id", jobId);
+        const { error } = await supabase.from("jobs").delete().eq("id", jobId);
+        if (error) alert("Hata: " + error.message);
+        else { alert("İlan başarıyla silindi."); fetchJobs(); }
+    } catch (err) { console.error("Silme hatası:", err); }
   };
 
   const handleAdminAction = async (job: Job) => {
@@ -185,6 +174,7 @@ export default function Home() {
       is_pending: false 
     }]);
     if (!error) { setIsModalOpen(false); setNewJob({ title: "", description: "", price_amount: "", phone_number: "" }); fetchJobs(); }
+    else { alert("Ekleme hatası: " + error.message); }
   };
 
   const finalJobs = useMemo(() => {
@@ -248,7 +238,7 @@ export default function Home() {
               </>
             )}
             <button onClick={() => user ? setIsModalOpen(true) : setIsAuthModalOpen(true)} className="bg-orange-600 text-white px-8 py-4 rounded-2xl font-black hover:scale-105 transition-all shadow-xl text-xs uppercase">+ İLAN VER</button>
-            {user && <button onClick={() => supabase.auth.signOut().then(() => window.location.reload())} className="text-[10px] font-black text-red-500 uppercase ml-2">Çıkış</button>}
+            {user && <button onClick={() => supabase.auth.signOut()} className="text-[10px] font-black text-red-500 uppercase ml-2">Çıkış</button>}
           </div>
         </header>
 
@@ -319,11 +309,13 @@ export default function Home() {
                 toggleFavorite={(id: string) => {
                   if (!user) return setIsAuthModalOpen(true);
                   if (favorites.includes(id)) {
-                    supabase.from("favorites").delete().eq("user_id", user.id).eq("job_id", id);
-                    setFavorites(prev => prev.filter(fid => fid !== id));
+                    supabase.from("favorites").delete().eq("user_id", user.id).eq("job_id", id).then(() => {
+                        setFavorites(prev => prev.filter(fid => fid !== id));
+                    });
                   } else {
-                    supabase.from("favorites").insert([{ user_id: user.id, job_id: id }]);
-                    setFavorites(prev => [...prev, id]);
+                    supabase.from("favorites").insert([{ user_id: user.id, job_id: id }]).then(() => {
+                        setFavorites(prev => [...prev, id]);
+                    });
                   }
                 }}
                 onDelete={() => handleDeleteJob(job.id)}
@@ -344,7 +336,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* ÖDEME MODALI */}
+      {/* MODALLAR (ÖDEME, PAYLAŞ, GİRİŞ) - ÖNCEKİ KODUN AYNI KISIMLARI */}
       {isPaymentModalOpen && selectedJobForBoost && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl flex items-center justify-center p-4 z-[110]">
           <div className="bg-[#0f172a] p-8 rounded-[40px] w-full max-w-md border-2 border-orange-600 shadow-2xl relative">
@@ -385,7 +377,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* İLAN PAYLAŞ MODAL */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-[90]">
           <div className="bg-[#0f172a] p-10 rounded-[40px] w-full max-w-md border border-[#1e293b] shadow-2xl">
@@ -404,7 +395,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* GİRİŞ MODAL */}
       {isAuthModalOpen && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-[100]">
           <div className="bg-[#0f172a] p-10 rounded-[40px] w-full max-w-sm border border-[#1e293b] text-center shadow-2xl">
