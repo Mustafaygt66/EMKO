@@ -47,7 +47,6 @@ export default function Home() {
 
   const fetchJobs = useCallback(async () => {
     try {
-      setLoading(true);
       const { data, error } = await supabase
         .from("jobs")
         .select("*")
@@ -61,7 +60,6 @@ export default function Home() {
     } catch (err) {
       console.error("Yükleme sırasında beklenmedik hata:", err);
     } finally {
-      // Bu satır sayesinde ne hata olursa olsun "Yükleniyor" ekranı kapanır
       setLoading(false);
     }
   }, []);
@@ -73,28 +71,30 @@ export default function Home() {
     } catch (err) { console.error("Ban kontrol hatası:", err); }
   }, []);
 
-useEffect(() => {
+  const fetchUserData = async (currentUser: any) => {
+    try {
+      if (!currentUser) return;
+      setUser(currentUser);
+      await checkBanStatus(currentUser.id);
+      
+      const { data: favs, error: favError } = await supabase
+        .from("favorites")
+        .select("job_id")
+        .eq("user_id", currentUser.id);
+        
+      if (!favError && favs) {
+        setFavorites(favs.map(f => f.job_id));
+      }
+    } catch (err) {
+      console.error("Kullanıcı verisi çekilirken hata:", err);
+    }
+  };
+
+  useEffect(() => {
     document.documentElement.classList.add('dark');
     
-    const fetchUserData = async (currentUser: any) => {
-      try {
-        if (!currentUser) return;
-        setUser(currentUser);
-        await checkBanStatus(currentUser.id);
-        
-        const { data: favs, error: favError } = await supabase
-          .from("favorites")
-          .select("job_id")
-          .eq("user_id", currentUser.id);
-          
-        if (favError) throw favError;
-        if (favs) setFavorites(favs.map(f => f.job_id));
-      } catch (err) {
-        console.error("Kullanıcı verisi çekilirken hata:", err);
-      }
-    };
-
     const setup = async () => {
+      setLoading(true);
       try {
         const { data: { user: currentUser } } = await supabase.auth.getUser();
         if (currentUser) {
@@ -103,7 +103,6 @@ useEffect(() => {
       } catch (err) {
         console.error("Setup hatası:", err);
       } finally {
-        // NE OLURSA OLSUN loading'i kapat ki sayfa donsun kalmasın
         await fetchJobs();
       }
     };
@@ -125,6 +124,20 @@ useEffect(() => {
       subscription.unsubscribe();
     };
   }, [fetchJobs, checkBanStatus]);
+
+  // GÜÇLENDİRİLMİŞ ÇIKIŞ FONKSİYONU
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut();
+      localStorage.clear();
+      sessionStorage.clear();
+      window.location.href = "/";
+    } catch (error) {
+      console.error("Çıkış hatası:", error);
+      localStorage.clear();
+      window.location.reload();
+    }
+  };
 
   const handleDeleteJob = async (jobId: string) => {
     if (!confirm("Bu ilanı tamamen kaldırmak istediğine emin misin?")) return;
@@ -253,7 +266,7 @@ useEffect(() => {
               </>
             )}
             <button onClick={() => user ? setIsModalOpen(true) : setIsAuthModalOpen(true)} className="bg-orange-600 text-white px-8 py-4 rounded-2xl font-black hover:scale-105 transition-all shadow-xl text-xs uppercase">+ İLAN VER</button>
-            {user && <button onClick={() => supabase.auth.signOut()} className="text-[10px] font-black text-red-500 uppercase ml-2">Çıkış</button>}
+            {user && <button onClick={handleSignOut} className="text-[10px] font-black text-red-500 uppercase ml-2 hover:underline">Çıkış</button>}
           </div>
         </header>
 
@@ -351,7 +364,7 @@ useEffect(() => {
         </div>
       </div>
 
-      {/* MODALLAR (ÖDEME, PAYLAŞ, GİRİŞ) - ÖNCEKİ KODUN AYNI KISIMLARI */}
+      {/* MODALLAR */}
       {isPaymentModalOpen && selectedJobForBoost && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl flex items-center justify-center p-4 z-[110]">
           <div className="bg-[#0f172a] p-8 rounded-[40px] w-full max-w-md border-2 border-orange-600 shadow-2xl relative">
