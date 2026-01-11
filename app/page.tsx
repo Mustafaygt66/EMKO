@@ -44,22 +44,31 @@ export default function Home() {
       sliderRef.current.scrollTo({ left: scrollTo, behavior: 'smooth' });
     }
   };
-  const fetchJobs = useCallback(async () => {
-      try {
-        setLoading(true);
-        const { data, error } = await supabase
-          .from("jobs")
-          .select("*")
-          .order('created_at', { ascending: false });
-        
-        if (error) throw error; // Hata varsa catch bloğuna zıpla
-        if (data) setJobs(data);
-      } catch (error) {
-        console.error("İlanlar yüklenirken hata:", error);
-      } finally {
-        setLoading(false); // Hata olsa da olmasa da loading'i kapat
-      }
-    }, []);
+    const fetchJobs = useCallback(async () => {
+        try {
+          setLoading(true);
+          // Sorguyu try-catch içine aldık
+          const { data, error } = await supabase
+            .from("jobs")
+            .select("*");
+            // Eğer created_at sütunu yoksa .order kısmını şimdilik kaldırıp dene
+            // .order('created_at', { ascending: false }); 
+          
+          if (error) {
+            console.error("Supa Hatası:", error.message);
+            return;
+          }
+
+          if (data) {
+            setJobs(data);
+          }
+        } catch (err) {
+          console.error("Beklenmedik Hata:", err);
+        } finally {
+          // Hata alsa da almasa da yükleniyor yazısını kaldırır
+          setLoading(false);
+        }
+      }, []);
 
   const checkBanStatus = useCallback(async (userId: string) => {
     const { data } = await supabase.from("banned_users").select("user_id").eq("user_id", userId).maybeSingle();
