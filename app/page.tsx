@@ -73,26 +73,39 @@ export default function Home() {
     } catch (err) { console.error("Ban kontrol hatası:", err); }
   }, []);
 
-  useEffect(() => {
+useEffect(() => {
     document.documentElement.classList.add('dark');
     
     const fetchUserData = async (currentUser: any) => {
-      if (!currentUser) return;
-      setUser(currentUser);
-      await checkBanStatus(currentUser.id);
-      
-      const { data: favs } = await supabase
-        .from("favorites")
-        .select("job_id")
-        .eq("user_id", currentUser.id);
+      try {
+        if (!currentUser) return;
+        setUser(currentUser);
+        await checkBanStatus(currentUser.id);
         
-      if (favs) setFavorites(favs.map(f => f.job_id));
+        const { data: favs, error: favError } = await supabase
+          .from("favorites")
+          .select("job_id")
+          .eq("user_id", currentUser.id);
+          
+        if (favError) throw favError;
+        if (favs) setFavorites(favs.map(f => f.job_id));
+      } catch (err) {
+        console.error("Kullanıcı verisi çekilirken hata:", err);
+      }
     };
 
     const setup = async () => {
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      if (currentUser) await fetchUserData(currentUser);
-      await fetchJobs();
+      try {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        if (currentUser) {
+          await fetchUserData(currentUser);
+        }
+      } catch (err) {
+        console.error("Setup hatası:", err);
+      } finally {
+        // NE OLURSA OLSUN loading'i kapat ki sayfa donsun kalmasın
+        await fetchJobs();
+      }
     };
 
     setup();
@@ -108,7 +121,9 @@ export default function Home() {
       }
     });
 
-    return () => { subscription.unsubscribe(); };
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [fetchJobs, checkBanStatus]);
 
   const handleDeleteJob = async (jobId: string) => {
