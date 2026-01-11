@@ -52,13 +52,10 @@ export default function Home() {
         .select("*")
         .order('created_at', { ascending: false });
       
-      if (error) {
-        console.error("Supa Hatası:", error.message);
-      } else if (data) {
-        setJobs(data);
-      }
+      if (error) console.error("Supa Hatası:", error.message);
+      else if (data) setJobs(data);
     } catch (err) {
-      console.error("Yükleme sırasında beklenmedik hata:", err);
+      console.error("Yükleme hatası:", err);
     } finally {
       setLoading(false);
     }
@@ -71,86 +68,67 @@ export default function Home() {
     } catch (err) { console.error("Ban kontrol hatası:", err); }
   }, []);
 
-  const fetchUserData = async (currentUser: any) => {
-    try {
-      if (!currentUser) return;
-      setUser(currentUser);
-      await checkBanStatus(currentUser.id);
-      
-      const { data: favs, error: favError } = await supabase
-        .from("favorites")
-        .select("job_id")
-        .eq("user_id", currentUser.id);
-        
-      if (!favError && favs) {
-        setFavorites(favs.map(f => f.job_id));
-      }
-    } catch (err) {
-      console.error("Kullanıcı verisi çekilirken hata:", err);
-    }
-  };
+  // GÜÇLENDİRİLMİŞ AUTH VE DATA ÇEKME SİSTEMİ
+  useEffect(() => {
+    document.documentElement.classList.add('dark');
+    
+    // Acil durum loading kapatıcı (5 saniye kuralı)
+    const safetyTimer = setTimeout(() => setLoading(false), 5000);
 
-useEffect(() => {
-  document.documentElement.classList.add('dark');
-  
-  // EMNİYET KİLİDİ: Eğer 5 saniye içinde yükleme bitmezse zorla bitir.
-  const safetyTimer = setTimeout(() => {
-    setLoading(false);
-  }, 5000);
-
-  const setup = async () => {
-    try {
-      // 1. Önce oturum kontrolü
-      const { data: { user: currentUser }, error: authError } = await supabase.auth.getUser();
-      
-      if (currentUser) {
-        setUser(currentUser);
-        await checkBanStatus(currentUser.id);
+    const setup = async () => {
+      try {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
         
-        // Favorileri çek (Hata alsa bile durma)
-        const { data: favs } = await supabase
-          .from("favorites")
-          .select("job_id")
-          .eq("user_id", currentUser.id);
+        if (currentUser) {
+          setUser(currentUser);
+          await checkBanStatus(currentUser.id).catch(() => {});
           
-        if (favs) setFavorites(favs.map(f => f.job_id));
+          const { data: favs } = await supabase
+            .from("favorites")
+            .select("job_id")
+            .eq("user_id", currentUser.id);
+            
+          if (favs) setFavorites(favs.map(f => f.job_id));
+        }
+      } catch (err) {
+        console.error("Setup sırasında hata:", err);
+      } finally {
+        await fetchJobs();
+        setLoading(false);
+        clearTimeout(safetyTimer);
       }
-    } catch (err) {
-      console.error("Giriş verileri çekilirken hata:", err);
-    } finally {
-      // 2. Ne olursa olsun ilanları çek ve loading'i kapat
-      await fetchJobs();
-      setLoading(false);
-      clearTimeout(safetyTimer); // Her şey yolundaysa zamanlayıcıyı iptal et
-    }
-  };
+    };
 
-  setup();
+    setup();
 
-  const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'SIGNED_IN' && session?.user) {
-      setUser(session.user);
-      await fetchJobs();
-    }
-    if (event === 'SIGNED_OUT') {
-      setUser(null);
-      setFavorites([]);
-      setView('all');
-    }
-  });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        setUser(session.user);
+        await fetchJobs();
+      }
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setFavorites([]);
+        setView('all');
+        setLoading(false);
+      }
+    });
 
-  return () => {
-    subscription.unsubscribe();
-    clearTimeout(safetyTimer);
-  };
-}, [fetchJobs, checkBanStatus]);
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(safetyTimer);
+    };
+  }, [fetchJobs, checkBanStatus]);
 
-  // GÜÇLENDİRİLMİŞ ÇIKIŞ FONKSİYONU
+  // KESİN ÇIKIŞ FONKSİYONU
   const handleSignOut = async () => {
     try {
+      // 1. Supabase çıkışı tetikle
       await supabase.auth.signOut();
+      // 2. Tarayıcıyı tamamen temizle
       localStorage.clear();
       sessionStorage.clear();
+      // 3. Sayfayı en kök dizine göndererek sıfırla
       window.location.href = "/";
     } catch (error) {
       console.error("Çıkış hatası:", error);
@@ -267,6 +245,16 @@ useEffect(() => {
         .slider-card { flex: 0 0 100%; scroll-snap-align: start; }
       `}</style>
 
+      {/* YÜKLENİYOR EKRANI - ÖN PLANDA */}
+      {loading && (
+        <div className="fixed inset-0 z-[9999] bg-[#020617] flex items-center justify-center">
+            <div className="text-center">
+                <div className="w-16 h-16 border-4 border-orange-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                <p className="font-black italic uppercase tracking-widest text-orange-500 animate-pulse">EMKO YÜKLENİYOR...</p>
+            </div>
+        </div>
+      )}
+
       <div className="max-w-5xl mx-auto p-4 md:p-8">
         <header className="flex flex-col md:flex-row justify-between items-center mb-12 bg-[#0f172a] p-8 rounded-[40px] border border-[#1e293b] gap-6 shadow-2xl">
           <div onClick={() => { setView('all'); setSearchTerm(""); setFilterType('all'); }} className="cursor-pointer group active:scale-95 transition-all text-center">
@@ -286,7 +274,16 @@ useEffect(() => {
               </>
             )}
             <button onClick={() => user ? setIsModalOpen(true) : setIsAuthModalOpen(true)} className="bg-orange-600 text-white px-8 py-4 rounded-2xl font-black hover:scale-105 transition-all shadow-xl text-xs uppercase">+ İLAN VER</button>
-            {user && <button onClick={handleSignOut} className="text-[10px] font-black text-red-500 uppercase ml-2 hover:underline">Çıkış</button>}
+            
+            {/* ÇIKIŞ BUTONU - GÜÇLENDİRİLMİŞ */}
+            {user && (
+              <button 
+                onClick={handleSignOut} 
+                className="relative z-[10] text-[10px] font-black text-red-500 uppercase ml-2 bg-red-500/10 px-4 py-2 rounded-xl border border-red-500/20 hover:bg-red-500 hover:text-white transition-all cursor-pointer"
+              >
+                Çıkış
+              </button>
+            )}
           </div>
         </header>
 
@@ -343,9 +340,7 @@ useEffect(() => {
 
         {/* İLAN LİSTESİ */}
         <div className="grid gap-8">
-          {loading ? (
-            <div className="text-center py-24 font-black text-slate-600 text-xl italic animate-pulse">Yükleniyor...</div>
-          ) : finalJobs.length > 0 ? (
+          {!loading && finalJobs.length > 0 ? (
             finalJobs.map(job => (
               <JobCard 
                 key={job.id} 
@@ -376,7 +371,7 @@ useEffect(() => {
                 }}
               />
             ))
-          ) : (
+          ) : !loading && (
             <div className="text-center py-24 bg-[#0f172a] rounded-[40px] border border-dashed border-[#1e293b]">
               <p className="text-slate-500 font-black uppercase italic">İlan bulunamadı.</p>
             </div>
@@ -387,14 +382,12 @@ useEffect(() => {
       {/* MODALLAR */}
       {isPaymentModalOpen && selectedJobForBoost && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl flex items-center justify-center p-4 z-[110]">
-          <div className="bg-[#0f172a] p-8 rounded-[40px] w-full max-w-md border-2 border-orange-600 shadow-2xl relative">
+          <div className="bg-[#0f172a] p-8 rounded-[40px] w-full max-w-md border-2 border-orange-600 shadow-2xl relative text-center">
             {!showFakePaymentWarning ? (
               <>
-                <div className="text-center mb-8">
-                  <h2 className="text-3xl font-black italic text-white uppercase tracking-tighter">VİTRİNE ÇIKART</h2>
-                  <p className="text-[10px] text-slate-400 font-black mt-3 uppercase tracking-widest">100 ₺ / 7 GÜN</p>
-                </div>
-                <div className="bg-[#020617] p-6 rounded-3xl border border-[#1e293b] mb-6 text-center">
+                <h2 className="text-3xl font-black italic text-white uppercase tracking-tighter">VİTRİNE ÇIKART</h2>
+                <p className="text-[10px] text-slate-400 font-black mt-3 mb-8 uppercase tracking-widest">100 ₺ / 7 GÜN</p>
+                <div className="bg-[#020617] p-6 rounded-3xl border border-[#1e293b] mb-6">
                   <p className="text-[9px] text-slate-400 uppercase font-black mb-2">IBAN (Tıkla Kopyala)</p>
                   <p onClick={() => {navigator.clipboard.writeText(ADMIN_IBAN); alert("Kopyalandı!");}} className="text-sm font-mono font-bold text-white break-all cursor-pointer bg-slate-800 p-3 rounded-xl">{ADMIN_IBAN}</p>
                   <p className="text-[12px] text-orange-500 mt-6 font-black uppercase italic">Açıklama: #{selectedJobForBoost.id.split('-')[0].toUpperCase()}</p>
@@ -403,16 +396,15 @@ useEffect(() => {
                 <button onClick={() => setIsPaymentModalOpen(false)} className="w-full mt-4 text-[10px] font-black text-slate-500 uppercase">VAZGEÇ</button>
               </>
             ) : (
-              <div className="text-center py-4">
-                <div className="w-20 h-20 bg-red-600/20 rounded-full flex items-center justify-center mx-auto mb-6 border-2 border-red-600 animate-pulse"><span className="text-4xl">⚠️</span></div>
+              <div className="py-4">
+                <div className="w-20 h-20 bg-red-600/20 rounded-full flex items-center justify-center mx-auto mb-6 border-2 border-red-600 animate-pulse text-4xl">⚠️</div>
                 <h3 className="text-2xl font-black text-red-600 uppercase mb-4 italic tracking-tighter">GÜVENLİK KONTROLÜ</h3>
                 <p className="text-xs text-slate-200 font-bold leading-relaxed uppercase mb-8">Ödemeyi yapmadan "Onaylıyorum" derseniz, hesabınız <span className="text-red-500">BANLANIR</span>.</p>
                 <div className="grid gap-4">
                   <button onClick={async () => { 
                     await supabase.from("jobs").update({ is_pending: true }).eq("id", selectedJobForBoost.id);
                     const jobCode = selectedJobForBoost.id.split('-')[0].toUpperCase();
-                    const waMsg = `Ödeme yapıldı: #${jobCode} (${selectedJobForBoost.title}) - Onay bekliyorum.`;
-                    window.open(`https://wa.me/${ADMIN_WA}?text=${encodeURIComponent(waMsg)}`, '_blank');
+                    window.open(`https://wa.me/${ADMIN_WA}?text=${encodeURIComponent(`Ödeme yapıldı: #${jobCode}`)}`, '_blank');
                     setIsPaymentModalOpen(false);
                     setShowFakePaymentWarning(false);
                     fetchJobs();
@@ -476,41 +468,27 @@ function JobCard({ job, toggleFavorite, favorites, onContact, isOwner, isAdmin, 
       </button>
 
       <div className="flex flex-col gap-6">
-        <h3 className="text-3xl font-black uppercase italic tracking-tighter text-white group-hover:text-orange-500 transition-colors leading-tight">
-          {job.title}
-        </h3>
-        <p className="text-slate-200 text-sm leading-relaxed font-medium bg-[#020617]/50 p-5 rounded-[30px] border border-[#1e293b]">
-          {job.description}
-        </p>
+        <h3 className="text-3xl font-black uppercase italic tracking-tighter text-white group-hover:text-orange-500 transition-colors leading-tight">{job.title}</h3>
+        <p className="text-slate-200 text-sm leading-relaxed font-medium bg-[#020617]/50 p-5 rounded-[30px] border border-[#1e293b]">{job.description}</p>
 
         <div className="mt-4 pt-8 border-t border-slate-800 flex flex-col gap-4">
           <div className="flex justify-between items-center">
              <p className="text-4xl font-black text-emerald-400 tracking-tighter">{job.price_amount}₺</p>
-             <button onClick={onContact} className="bg-white text-slate-950 px-8 py-4 rounded-2xl font-black text-[11px] uppercase shadow-xl hover:bg-orange-600 hover:text-white transition-all">
-               WHATSAPP
-             </button>
+             <button onClick={onContact} className="bg-white text-slate-950 px-8 py-4 rounded-2xl font-black text-[11px] uppercase shadow-xl hover:bg-orange-600 hover:text-white transition-all">WHATSAPP</button>
           </div>
 
           <div className="flex flex-wrap gap-2 mt-2">
             {isOwner && !job.is_featured && !job.is_pending && (
-              <button onClick={onBoostClick} className="bg-orange-600/20 text-orange-500 border border-orange-600/50 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 hover:text-white transition-all">
-                VİTRİNE ÇIKART 🔥
-              </button>
+              <button onClick={onBoostClick} className="bg-orange-600/20 text-orange-500 border border-orange-600/50 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 hover:text-white transition-all">VİTRİNE ÇIKART 🔥</button>
             )}
             {(isOwner || isAdmin) && (
-              <button onClick={onDelete} className="bg-red-600/20 text-red-500 border border-red-600/50 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-red-600 hover:text-white transition-all">
-                İLANIMI SİL 🗑️
-              </button>
+              <button onClick={onDelete} className="bg-red-600/20 text-red-500 border border-red-600/50 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-red-600 hover:text-white transition-all">İLANIMI SİL 🗑️</button>
             )}
             {isAdmin && job.is_pending && (
-              <button onClick={onApprove} className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase">
-                ÖDEMEYİ ONAYLA ✅
-              </button>
+              <button onClick={onApprove} className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase">ÖDEMEYİ ONAYLA ✅</button>
             )}
             {isAdmin && (
-              <button onClick={onAdminAction} className="bg-slate-800 text-slate-400 px-4 py-2 rounded-xl text-[10px] font-black uppercase italic">
-                ADMİN KONTROL
-              </button>
+              <button onClick={onAdminAction} className="bg-slate-800 text-slate-400 px-4 py-2 rounded-xl text-[10px] font-black uppercase italic">ADMİN KONTROL</button>
             )}
           </div>
         </div>
