@@ -90,40 +90,60 @@ export default function Home() {
     }
   };
 
-  useEffect(() => {
-    document.documentElement.classList.add('dark');
-    
-    const setup = async () => {
-      setLoading(true);
-      try {
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
-        if (currentUser) {
-          await fetchUserData(currentUser);
-        }
-      } catch (err) {
-        console.error("Setup hatası:", err);
-      } finally {
-        await fetchJobs();
-      }
-    };
+useEffect(() => {
+  document.documentElement.classList.add('dark');
+  
+  // EMNİYET KİLİDİ: Eğer 5 saniye içinde yükleme bitmezse zorla bitir.
+  const safetyTimer = setTimeout(() => {
+    setLoading(false);
+  }, 5000);
 
-    setup();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session?.user) {
-        await fetchUserData(session.user);
+  const setup = async () => {
+    try {
+      // 1. Önce oturum kontrolü
+      const { data: { user: currentUser }, error: authError } = await supabase.auth.getUser();
+      
+      if (currentUser) {
+        setUser(currentUser);
+        await checkBanStatus(currentUser.id);
+        
+        // Favorileri çek (Hata alsa bile durma)
+        const { data: favs } = await supabase
+          .from("favorites")
+          .select("job_id")
+          .eq("user_id", currentUser.id);
+          
+        if (favs) setFavorites(favs.map(f => f.job_id));
       }
-      if (event === 'SIGNED_OUT') {
-        setUser(null);
-        setFavorites([]);
-        setView('all');
-      }
-    });
+    } catch (err) {
+      console.error("Giriş verileri çekilirken hata:", err);
+    } finally {
+      // 2. Ne olursa olsun ilanları çek ve loading'i kapat
+      await fetchJobs();
+      setLoading(false);
+      clearTimeout(safetyTimer); // Her şey yolundaysa zamanlayıcıyı iptal et
+    }
+  };
 
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [fetchJobs, checkBanStatus]);
+  setup();
+
+  const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_IN' && session?.user) {
+      setUser(session.user);
+      await fetchJobs();
+    }
+    if (event === 'SIGNED_OUT') {
+      setUser(null);
+      setFavorites([]);
+      setView('all');
+    }
+  });
+
+  return () => {
+    subscription.unsubscribe();
+    clearTimeout(safetyTimer);
+  };
+}, [fetchJobs, checkBanStatus]);
 
   // GÜÇLENDİRİLMİŞ ÇIKIŞ FONKSİYONU
   const handleSignOut = async () => {
