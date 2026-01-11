@@ -179,7 +179,7 @@ export default function Home() {
       email: authEmail,
       options: { 
         // BURASI ÇOK ÖNEMLİ: URL'nin sonuna slash koyduğundan emin ol
-        emailRedirectTo: window.location.origin + '/', 
+        emailRedirectTo: window.location.origin + 'https://emko-phi.vercel.app/', 
       }
     });
     
