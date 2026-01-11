@@ -58,27 +58,41 @@ export default function Home() {
   }, []);
 
   // BİRLEŞTİRİLMİŞ VE SENKRONİZE EDİLMİŞ EFFECT
+// DÜZELTİLMİŞ USEEFFECT
   useEffect(() => {
     document.documentElement.classList.add('dark');
     
+    // Yardımcı fonksiyon: Kullanıcı verilerini ve favorileri çeker
+    const fetchUserData = async (currentUser: any) => {
+      if (!currentUser) return;
+      
+      setUser(currentUser);
+      await checkBanStatus(currentUser.id);
+      
+      const { data: favs } = await supabase
+        .from("favorites")
+        .select("job_id")
+        .eq("user_id", currentUser.id);
+        
+      if (favs) setFavorites(favs.map(f => f.job_id));
+    };
+
+    // İlk açılış kontrolü
     const setup = async () => {
       const { data: { user: currentUser } } = await supabase.auth.getUser();
       if (currentUser) {
-        setUser(currentUser);
-        await checkBanStatus(currentUser.id);
-        const { data: favs } = await supabase.from("favorites").select("job_id").eq("user_id", currentUser.id);
-        if (favs) setFavorites(favs.map(f => f.job_id));
+        await fetchUserData(currentUser);
       }
     };
 
     setup();
     fetchJobs();
 
-    // Giriş/Çıkış Takibi
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_IN') {
-        // Mailden onaylayıp yeni sekme açıldığında eski sekme de kendini tazeler
-        window.location.reload(); 
+    // Giriş/Çıkış Dinleyicisi
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        // SAYFAYI YENİLEME (RELOAD) YOK! State'i güncelliyoruz.
+        await fetchUserData(session.user);
       }
       if (event === 'SIGNED_OUT') {
         setUser(null);
