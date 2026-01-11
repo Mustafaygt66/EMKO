@@ -68,27 +68,35 @@ export default function Home() {
     } catch (err) { console.error("Ban kontrol hatası:", err); }
   }, []);
 
-  // AUTH VE DATA SİSTEMİ
+  // GÜÇLENDİRİLMİŞ AUTH VE DATA ÇEKME SİSTEMİ
   useEffect(() => {
     document.documentElement.classList.add('dark');
     
+    // Acil durum loading kapatıcı (5 saniye kuralı)
+    const safetyTimer = setTimeout(() => setLoading(false), 5000);
+
     const setup = async () => {
-      setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session?.user) {
-        setUser(session.user);
-        checkBanStatus(session.user.id);
+      try {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
         
-        const { data: favs } = await supabase
-          .from("favorites")
-          .select("job_id")
-          .eq("user_id", session.user.id);
+        if (currentUser) {
+          setUser(currentUser);
+          await checkBanStatus(currentUser.id).catch(() => {});
           
-        if (favs) setFavorites(favs.map(f => f.job_id));
+          const { data: favs } = await supabase
+            .from("favorites")
+            .select("job_id")
+            .eq("user_id", currentUser.id);
+            
+          if (favs) setFavorites(favs.map(f => f.job_id));
+        }
+      } catch (err) {
+        console.error("Setup sırasında hata:", err);
+      } finally {
+        await fetchJobs();
+        setLoading(false);
+        clearTimeout(safetyTimer);
       }
-      await fetchJobs();
-      setLoading(false);
     };
 
     setup();
@@ -97,37 +105,58 @@ export default function Home() {
       if (event === 'SIGNED_IN' && session?.user) {
         setUser(session.user);
         await fetchJobs();
-      } else if (event === 'SIGNED_OUT') {
+      }
+      if (event === 'SIGNED_OUT') {
         setUser(null);
         setFavorites([]);
         setView('all');
+        setLoading(false);
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(safetyTimer);
+    };
   }, [fetchJobs, checkBanStatus]);
 
+  // KESİN ÇIKIŞ FONKSİYONU
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    localStorage.clear();
-    window.location.href = "/";
+    try {
+      // 1. Supabase çıkışı tetikle
+      await supabase.auth.signOut();
+      // 2. Tarayıcıyı tamamen temizle
+      localStorage.clear();
+      sessionStorage.clear();
+      // 3. Sayfayı en kök dizine göndererek sıfırla
+      window.location.href = "/";
+    } catch (error) {
+      console.error("Çıkış hatası:", error);
+      localStorage.clear();
+      window.location.reload();
+    }
   };
 
   const handleDeleteJob = async (jobId: string) => {
     if (!confirm("Bu ilanı tamamen kaldırmak istediğine emin misin?")) return;
-    const { error } = await supabase.from("jobs").delete().eq("id", jobId);
-    if (error) alert("Hata: " + error.message);
-    else { alert("İlan başarıyla silindi."); fetchJobs(); }
+    try {
+        await supabase.from("favorites").delete().eq("job_id", jobId);
+        const { error } = await supabase.from("jobs").delete().eq("id", jobId);
+        if (error) alert("Hata: " + error.message);
+        else { alert("İlan başarıyla silindi."); fetchJobs(); }
+    } catch (err) { console.error("Silme hatası:", err); }
   };
 
   const handleAdminAction = async (job: Job) => {
-    const action = confirm("ADMİN: TAMAM dersen ilanı siler, İPTAL dersen kullanıcıyı BANLAR.");
+    const action = confirm("YÖNETİCİ SEÇENEĞİ:\n\nTAMAM: Sadece bu ilanı sil.\nİPTAL: Kullanıcıyı BANLA ve tüm ilanlarını sil!");
     if (action) { handleDeleteJob(job.id); } 
     else {
-      if (confirm("Kullanıcıyı banlamak istediğine emin misin?")) {
+      const reallyBan = confirm("EMİN MİSİN? Bu kullanıcı yasaklanacak ve TÜM verileri silinecek.");
+      if (reallyBan) {
+        await supabase.from("favorites").delete().eq("user_id", job.user_id);
         await supabase.from("banned_users").insert([{ user_id: job.user_id }]);
         await supabase.from("jobs").delete().eq("user_id", job.user_id);
-        alert("Kullanıcı yasaklandı.");
+        alert("Kullanıcı yasaklandı!");
         fetchJobs();
       }
     }
@@ -148,12 +177,16 @@ export default function Home() {
     e.preventDefault();
     const { error } = await supabase.auth.signInWithOtp({ 
       email: authEmail,
-      options: { emailRedirectTo: window.location.origin }
+      options: { 
+        // BURASI ÇOK ÖNEMLİ: URL'nin sonuna slash koyduğundan emin ol
+        emailRedirectTo: window.location.origin + '/', 
+      }
     });
     
-    if (error) alert("Hata: " + error.message);
-    else {
-      alert("Giriş bağlantısı e-postana gönderildi!");
+    if (error) {
+      alert("Hata: " + error.message);
+    } else {
+      alert("Giriş bağlantısı e-postana gönderildi! Lütfen gereksiz (spam) kutusunu da kontrol et.");
       setIsAuthModalOpen(false);
     }
   };
@@ -174,11 +207,8 @@ export default function Home() {
       is_featured: false,
       is_pending: false 
     }]);
-    if (!error) { 
-      setIsModalOpen(false); 
-      setNewJob({ title: "", description: "", price_amount: "", phone_number: "" }); 
-      fetchJobs(); 
-    } else { alert("Hata: " + error.message); }
+    if (!error) { setIsModalOpen(false); setNewJob({ title: "", description: "", price_amount: "", phone_number: "" }); fetchJobs(); }
+    else { alert("Ekleme hatası: " + error.message); }
   };
 
   const finalJobs = useMemo(() => {
@@ -187,14 +217,11 @@ export default function Home() {
       const isActuallyFeatured = j.is_featured && j.featured_until && new Date(j.featured_until) > now;
       const matchesSearch = j.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
                             j.description.toLowerCase().includes(searchTerm.toLowerCase());
-      
       if (view === 'admin-pending') return j.is_pending && matchesSearch;
       if (view === 'favorites') return favorites.includes(j.id) && matchesSearch;
       if (view === 'my-jobs') return j.user_id === user?.id && matchesSearch;
-      
       if (filterType === 'featured') return isActuallyFeatured && matchesSearch;
       if (filterType === 'normal') return !isActuallyFeatured && !j.is_pending && matchesSearch;
-      
       return !j.is_pending && matchesSearch;
     });
 
@@ -216,6 +243,7 @@ export default function Home() {
     <div className="min-h-screen bg-[#020617] text-slate-100 font-sans pb-20 overflow-x-hidden">
       <Head>
         <title>EMKO | Mutek Tech</title>
+        <link rel="shortcut icon" href="/logom.ico" type="image/x-icon" />
       </Head>
 
       <style jsx global>{`
@@ -225,38 +253,44 @@ export default function Home() {
         .slider-card { flex: 0 0 100%; scroll-snap-align: start; }
       `}</style>
 
-      {/* LOADING */}
+      {/* YÜKLENİYOR EKRANI - ÖN PLANDA */}
       {loading && (
         <div className="fixed inset-0 z-[9999] bg-[#020617] flex items-center justify-center">
             <div className="text-center">
                 <div className="w-16 h-16 border-4 border-orange-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                <p className="font-black italic text-orange-500 animate-pulse">EMKO YÜKLENİYOR...</p>
+                <p className="font-black italic uppercase tracking-widest text-orange-500 animate-pulse">EMKO YÜKLENİYOR...</p>
             </div>
         </div>
       )}
 
       <div className="max-w-5xl mx-auto p-4 md:p-8">
         <header className="flex flex-col md:flex-row justify-between items-center mb-12 bg-[#0f172a] p-8 rounded-[40px] border border-[#1e293b] gap-6 shadow-2xl">
-          <div onClick={() => { setView('all'); setSearchTerm(""); setFilterType('all'); }} className="cursor-pointer text-center">
+          <div onClick={() => { setView('all'); setSearchTerm(""); setFilterType('all'); }} className="cursor-pointer group active:scale-95 transition-all text-center">
             <h1 className="text-6xl font-black text-orange-600 italic tracking-tighter leading-none">EMKO</h1>
             <p className="text-[10px] text-slate-300 font-black tracking-[0.3em] uppercase mt-1">Mutek Tech</p>
           </div>
-          
           <div className="flex flex-wrap justify-center items-center gap-4">
             {user?.email === ADMIN_EMAIL && (
-              <button onClick={() => setView('admin-pending')} className={`px-5 py-2.5 rounded-xl font-black text-[10px] border-2 ${view === 'admin-pending' ? 'bg-red-600 border-red-600' : 'border-red-600 text-red-600'}`}>
+              <button onClick={() => setView('admin-pending')} className={`px-5 py-2.5 rounded-xl font-black text-[10px] uppercase border-2 ${view === 'admin-pending' ? 'bg-red-600 border-red-600' : 'border-red-600 text-red-600'}`}>
                 ONAY BEKLEYENLER ({jobs.filter(j => j.is_pending).length})
               </button>
             )}
             {user && (
               <>
-                <button onClick={() => setView('my-jobs')} className={`px-5 py-2.5 rounded-xl font-black text-[10px] ${view === 'my-jobs' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-200'}`}>İLANLARIM</button>
-                <button onClick={() => setView('favorites')} className={`px-5 py-2.5 rounded-xl font-black text-[10px] ${view === 'favorites' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-slate-200'}`}>KAYDETTİKLERİM</button>
+                <button onClick={() => setView('my-jobs')} className={`px-5 py-2.5 rounded-xl font-black text-[10px] uppercase ${view === 'my-jobs' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-200'}`}>İLANLARIM</button>
+                <button onClick={() => setView('favorites')} className={`px-5 py-2.5 rounded-xl font-black text-[10px] uppercase ${view === 'favorites' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-slate-200'}`}>KAYDETTİKLERİM</button>
               </>
             )}
-            <button onClick={() => user ? setIsModalOpen(true) : setIsAuthModalOpen(true)} className="bg-orange-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase">+ İLAN VER</button>
+            <button onClick={() => user ? setIsModalOpen(true) : setIsAuthModalOpen(true)} className="bg-orange-600 text-white px-8 py-4 rounded-2xl font-black hover:scale-105 transition-all shadow-xl text-xs uppercase">+ İLAN VER</button>
+            
+            {/* ÇIKIŞ BUTONU - GÜÇLENDİRİLMİŞ */}
             {user && (
-              <button onClick={handleSignOut} className="text-[10px] font-black text-red-500 bg-red-500/10 px-4 py-2 rounded-xl border border-red-500/20">Çıkış</button>
+              <button 
+                onClick={handleSignOut} 
+                className="relative z-[10] text-[10px] font-black text-red-500 uppercase ml-2 bg-red-500/10 px-4 py-2 rounded-xl border border-red-500/20 hover:bg-red-500 hover:text-white transition-all cursor-pointer"
+              >
+                Çıkış
+              </button>
             )}
           </div>
         </header>
@@ -265,134 +299,156 @@ export default function Home() {
         {view === 'all' && featuredJobs.length > 0 && (
           <section className="mb-12 relative group">
             <div className="relative flex items-center">
-              <button onClick={() => scrollSlider('left')} className="absolute -left-4 z-20 bg-white/10 p-4 rounded-full hidden md:block">←</button>
+              <button onClick={() => scrollSlider('left')} className="absolute -left-4 z-20 bg-white/10 hover:bg-orange-600 p-4 rounded-full backdrop-blur-md hidden md:block">←</button>
               <div ref={sliderRef} className="slider-content no-scrollbar px-1">
                 {featuredJobs.map(job => (
                   <div key={job.id} className="slider-card">
                     <div className="bg-gradient-to-br from-orange-600/30 via-[#0f172a] to-orange-900/10 border-4 border-orange-600 p-10 rounded-[50px] shadow-2xl relative h-full">
-                      <h4 className="text-4xl font-black italic uppercase text-white mb-6">{job.title}</h4>
+                      <div className="flex items-center gap-2 mb-4">
+                        <span className="w-2 h-2 bg-orange-600 rounded-full animate-ping"></span>
+                        <span className="text-[10px] font-black text-orange-500 tracking-[0.3em] uppercase italic">TREND İLAN 🔥</span>
+                      </div>
+                      <h4 className="text-4xl font-black italic uppercase text-white tracking-tighter leading-none mb-6">{job.title}</h4>
                       <div className="flex justify-between items-end mt-12">
                         <div>
-                          <p className="text-[10px] text-slate-400 font-black mb-1 uppercase">Başlangıç Fiyatı</p>
+                          <p className="text-[10px] text-slate-400 font-black uppercase mb-1">Başlangıç Fiyatı</p>
                           <span className="text-4xl font-black text-emerald-400">{job.price_amount}₺</span>
                         </div>
-                        <button onClick={() => window.open(`https://wa.me/${job.phone_number}`, '_blank')} className="bg-white text-black px-10 py-5 rounded-3xl font-black text-xs">WHATSAPP İLE SOR</button>
+                        <button onClick={() => {
+                          const msg = encodeURIComponent(`Selam, TREND listesindeki "${job.title}" ilanınız için yazıyorum. Detay alabilir miyim?`);
+                          window.open(`https://wa.me/${job.phone_number}?text=${msg}`, '_blank');
+                        }} className="bg-white text-black px-10 py-5 rounded-3xl font-black text-xs uppercase hover:bg-orange-600 hover:text-white transition-all shadow-xl">WHATSAPP İLE SOR</button>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
-              <button onClick={() => scrollSlider('right')} className="absolute -right-4 z-20 bg-white/10 p-4 rounded-full hidden md:block">→</button>
+              <button onClick={() => scrollSlider('right')} className="absolute -right-4 z-20 bg-white/10 hover:bg-orange-600 p-4 rounded-full backdrop-blur-md hidden md:block">→</button>
             </div>
+            <p className="text-center text-[8px] text-slate-500 font-black mt-4 uppercase tracking-[.4em] md:hidden">KAYDIRARAK GÖZ AT ← →</p>
           </section>
         )}
 
         {/* FİLTRELER */}
         <div className="flex flex-col gap-6 mb-8">
-          <div className="bg-[#0f172a] p-4 rounded-[32px] border border-[#1e293b] flex flex-col md:flex-row gap-4">
-            <input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="İlanlarda ara..." className="flex-1 bg-[#020617] border-2 border-[#1e293b] rounded-2xl px-6 py-4 text-sm text-white outline-none focus:border-orange-600" />
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="bg-[#020617] border-2 border-[#1e293b] rounded-2xl px-4 py-4 text-xs font-black uppercase text-slate-300">
+          <div className="bg-[#0f172a] p-4 rounded-[32px] border border-[#1e293b] flex flex-col md:flex-row gap-4 shadow-xl">
+            <input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="İlanlarda ara..." className="flex-1 bg-[#020617] border-2 border-[#1e293b] rounded-2xl px-6 py-4 text-sm text-white outline-none focus:border-orange-600 transition-all" />
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="bg-[#020617] border-2 border-[#1e293b] rounded-2xl px-4 py-4 text-xs font-black uppercase text-slate-300 outline-none cursor-pointer">
               <option value="newest">En Yeni</option>
               <option value="price_high">En Pahalı</option>
               <option value="price_low">En Ucuz</option>
             </select>
           </div>
-          <div className="flex gap-3">
-            {['all', 'featured', 'normal'].map((type) => (
-              <button key={type} onClick={() => setFilterType(type as any)} className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase ${filterType === type ? 'bg-orange-600 text-white' : 'bg-slate-800 text-slate-400'}`}>
-                {type === 'all' ? 'TÜMÜ' : type === 'featured' ? 'VİTRİN 🔥' : 'NORMAL'}
-              </button>
-            ))}
+          <div className="flex justify-center md:justify-start gap-3 px-2">
+            <button onClick={() => setFilterType('all')} className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase transition-all ${filterType === 'all' ? 'bg-orange-600 text-white shadow-lg' : 'bg-slate-800 text-slate-400'}`}>TÜMÜ</button>
+            <button onClick={() => setFilterType('featured')} className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase transition-all ${filterType === 'featured' ? 'bg-orange-600 text-white shadow-lg' : 'bg-slate-800 text-slate-400'}`}>VİTRİN 🔥</button>
+            <button onClick={() => setFilterType('normal')} className={`px-6 py-3 rounded-xl font-black text-[10px] uppercase transition-all ${filterType === 'normal' ? 'bg-orange-600 text-white shadow-lg' : 'bg-slate-800 text-slate-400'}`}>NORMAL</button>
           </div>
         </div>
 
-        {/* LİSTE */}
+        {/* İLAN LİSTESİ */}
         <div className="grid gap-8">
-          {finalJobs.map(job => (
-            <JobCard 
-              key={job.id} 
-              job={job} 
-              user={user} 
-              favorites={favorites}
-              isOwner={job.user_id === user?.id} 
-              isAdmin={user?.email === ADMIN_EMAIL}
-              toggleFavorite={async (id: string) => {
-                if (!user) return setIsAuthModalOpen(true);
-                if (favorites.includes(id)) {
-                  await supabase.from("favorites").delete().eq("user_id", user.id).eq("job_id", id);
-                  setFavorites(prev => prev.filter(fid => fid !== id));
-                } else {
-                  await supabase.from("favorites").insert([{ user_id: user.id, job_id: id }]);
-                  setFavorites(prev => [...prev, id]);
-                }
-              }}
-              onDelete={() => handleDeleteJob(job.id)}
-              onAdminAction={() => handleAdminAction(job)}
-              onApprove={() => handleApproveBoost(job)}
-              onBoostClick={() => { setSelectedJobForBoost(job); setIsPaymentModalOpen(true); }}
-              onContact={() => window.open(`https://wa.me/${job.phone_number}`, '_blank')}
-            />
-          ))}
+          {!loading && finalJobs.length > 0 ? (
+            finalJobs.map(job => (
+              <JobCard 
+                key={job.id} 
+                job={job} 
+                user={user} 
+                favorites={favorites}
+                isOwner={job.user_id === user?.id} 
+                isAdmin={user?.email === ADMIN_EMAIL}
+                toggleFavorite={(id: string) => {
+                  if (!user) return setIsAuthModalOpen(true);
+                  if (favorites.includes(id)) {
+                    supabase.from("favorites").delete().eq("user_id", user.id).eq("job_id", id).then(() => {
+                        setFavorites(prev => prev.filter(fid => fid !== id));
+                    });
+                  } else {
+                    supabase.from("favorites").insert([{ user_id: user.id, job_id: id }]).then(() => {
+                        setFavorites(prev => [...prev, id]);
+                    });
+                  }
+                }}
+                onDelete={() => handleDeleteJob(job.id)}
+                onAdminAction={() => handleAdminAction(job)}
+                onApprove={() => handleApproveBoost(job)}
+                onBoostClick={() => { setSelectedJobForBoost(job); setIsPaymentModalOpen(true); }}
+                onContact={() => {
+                  const msg = encodeURIComponent(`Selam, "${job.title}" ilanınız için yazıyorum. Hala duruyor mu?`);
+                  window.open(`https://wa.me/${job.phone_number}?text=${msg}`, '_blank');
+                }}
+              />
+            ))
+          ) : !loading && (
+            <div className="text-center py-24 bg-[#0f172a] rounded-[40px] border border-dashed border-[#1e293b]">
+              <p className="text-slate-500 font-black uppercase italic">İlan bulunamadı.</p>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* MODAL: ÖDEME */}
+      {/* MODALLAR */}
       {isPaymentModalOpen && selectedJobForBoost && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl flex items-center justify-center p-4 z-[110]">
-          <div className="bg-[#0f172a] p-8 rounded-[40px] w-full max-w-md border-2 border-orange-600 shadow-2xl text-center">
+          <div className="bg-[#0f172a] p-8 rounded-[40px] w-full max-w-md border-2 border-orange-600 shadow-2xl relative text-center">
             {!showFakePaymentWarning ? (
               <>
-                <h2 className="text-3xl font-black italic text-white uppercase">VİTRİNE ÇIKART</h2>
-                <p className="text-[10px] text-slate-400 font-black mt-3 mb-8">100 ₺ / 7 GÜN</p>
+                <h2 className="text-3xl font-black italic text-white uppercase tracking-tighter">VİTRİNE ÇIKART</h2>
+                <p className="text-[10px] text-slate-400 font-black mt-3 mb-8 uppercase tracking-widest">100 ₺ / 7 GÜN</p>
                 <div className="bg-[#020617] p-6 rounded-3xl border border-[#1e293b] mb-6">
                   <p className="text-[9px] text-slate-400 uppercase font-black mb-2">IBAN (Tıkla Kopyala)</p>
                   <p onClick={() => {navigator.clipboard.writeText(ADMIN_IBAN); alert("Kopyalandı!");}} className="text-sm font-mono font-bold text-white break-all cursor-pointer bg-slate-800 p-3 rounded-xl">{ADMIN_IBAN}</p>
                   <p className="text-[12px] text-orange-500 mt-6 font-black uppercase italic">Açıklama: #{selectedJobForBoost.id.split('-')[0].toUpperCase()}</p>
                 </div>
-                <button onClick={() => setShowFakePaymentWarning(true)} className="w-full p-5 bg-emerald-600 text-white rounded-[24px] font-black uppercase text-sm">ÖDEMEYİ YAPTIM ✅</button>
+                <button onClick={() => setShowFakePaymentWarning(true)} className="w-full p-5 bg-emerald-600 text-white rounded-[24px] font-black uppercase text-sm shadow-xl">ÖDEMEYİ YAPTIM ✅</button>
                 <button onClick={() => setIsPaymentModalOpen(false)} className="w-full mt-4 text-[10px] font-black text-slate-500 uppercase">VAZGEÇ</button>
               </>
             ) : (
               <div className="py-4">
-                <h3 className="text-2xl font-black text-red-600 uppercase mb-4 italic">GÜVENLİK KONTROLÜ</h3>
-                <p className="text-xs text-slate-200 font-bold uppercase mb-8">Ödeme yapmadan onaylarsanız banlanırsınız.</p>
-                <button onClick={async () => { 
-                  await supabase.from("jobs").update({ is_pending: true }).eq("id", selectedJobForBoost.id);
-                  window.open(`https://wa.me/${ADMIN_WA}?text=Odeme Yapildi: ${selectedJobForBoost.id}`, '_blank');
-                  setIsPaymentModalOpen(false); setShowFakePaymentWarning(false); fetchJobs();
-                }} className="w-full p-5 bg-white text-black rounded-[22px] font-black uppercase text-xs">ONAYLIYORUM</button>
+                <div className="w-20 h-20 bg-red-600/20 rounded-full flex items-center justify-center mx-auto mb-6 border-2 border-red-600 animate-pulse text-4xl">⚠️</div>
+                <h3 className="text-2xl font-black text-red-600 uppercase mb-4 italic tracking-tighter">GÜVENLİK KONTROLÜ</h3>
+                <p className="text-xs text-slate-200 font-bold leading-relaxed uppercase mb-8">Ödemeyi yapmadan "Onaylıyorum" derseniz, hesabınız <span className="text-red-500">BANLANIR</span>.</p>
+                <div className="grid gap-4">
+                  <button onClick={async () => { 
+                    await supabase.from("jobs").update({ is_pending: true }).eq("id", selectedJobForBoost.id);
+                    const jobCode = selectedJobForBoost.id.split('-')[0].toUpperCase();
+                    window.open(`https://wa.me/${ADMIN_WA}?text=${encodeURIComponent(`Ödeme yapıldı: #${jobCode}`)}`, '_blank');
+                    setIsPaymentModalOpen(false);
+                    setShowFakePaymentWarning(false);
+                    fetchJobs();
+                  }} className="w-full p-5 bg-white text-black rounded-[22px] font-black uppercase text-xs">ÖDEMEYİ YAPTIM, ONAYLIYORUM</button>
+                  <button onClick={() => { setShowFakePaymentWarning(false); setIsPaymentModalOpen(false); }} className="w-full p-4 bg-slate-800 text-slate-400 rounded-[22px] font-black uppercase text-[10px]">İPTAL</button>
+                </div>
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* MODAL: İLAN VER */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-[90]">
-          <div className="bg-[#0f172a] p-10 rounded-[40px] w-full max-w-md border border-[#1e293b]">
-            <h2 className="text-4xl font-black mb-8 italic text-orange-600 uppercase text-center">İlan Paylaş</h2>
+          <div className="bg-[#0f172a] p-10 rounded-[40px] w-full max-w-md border border-[#1e293b] shadow-2xl">
+            <h2 className="text-4xl font-black mb-8 italic text-orange-600 uppercase text-center tracking-tighter">İlan Paylaş</h2>
             <form onSubmit={handleCreateJob} className="grid gap-5">
-              <input placeholder="Başlık" className="w-full p-5 bg-[#020617] border-2 border-[#1e293b] rounded-[24px] text-sm text-white" onChange={(e) => setNewJob({...newJob, title: e.target.value})} required />
-              <textarea placeholder="Detaylar..." className="w-full p-5 bg-[#020617] border-2 border-[#1e293b] rounded-[24px] h-36 text-sm text-white" onChange={(e) => setNewJob({...newJob, description: e.target.value})} required />
+              <input placeholder="Başlık" className="w-full p-5 bg-[#020617] border-2 border-[#1e293b] rounded-[24px] text-sm text-white outline-none" onChange={(e) => setNewJob({...newJob, title: e.target.value})} required />
+              <textarea placeholder="Detaylar..." className="w-full p-5 bg-[#020617] border-2 border-[#1e293b] rounded-[24px] h-36 text-sm text-white outline-none" onChange={(e) => setNewJob({...newJob, description: e.target.value})} required />
               <div className="grid grid-cols-2 gap-4">
                 <input type="number" placeholder="Fiyat (₺)" className="w-full p-5 bg-[#020617] border-2 border-[#1e293b] rounded-[24px] text-sm text-white" onChange={(e) => setNewJob({...newJob, price_amount: e.target.value})} required />
-                <input type="text" maxLength={10} placeholder="Tel (5xx...)" className="w-full p-5 bg-[#020617] border-2 border-[#1e293b] rounded-[24px] text-sm text-white" onChange={(e) => setNewJob({...newJob, phone_number: e.target.value})} required />
+                <input type="text" maxLength={10} placeholder="Tel (5xx xxx xx xx)" className="w-full p-5 bg-[#020617] border-2 border-[#1e293b] rounded-[24px] text-sm text-white" onChange={(e) => setNewJob({...newJob, phone_number: e.target.value})} required />
               </div>
               <button type="submit" className="w-full p-5 bg-orange-600 text-white rounded-[24px] font-black uppercase">YAYINLA</button>
-              <button type="button" onClick={() => setIsModalOpen(false)} className="text-[10px] font-black text-slate-500 uppercase text-center w-full">VAZGEÇ</button>
+              <button type="button" onClick={() => setIsModalOpen(false)} className="text-[10px] font-black text-slate-500 uppercase">VAZGEÇ</button>
             </form>
           </div>
         </div>
       )}
 
-      {/* MODAL: AUTH */}
       {isAuthModalOpen && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-[100]">
-          <div className="bg-[#0f172a] p-10 rounded-[40px] w-full max-w-sm border border-[#1e293b] text-center">
-            <h2 className="text-4xl font-black mb-6 text-orange-600 uppercase italic tracking-tighter">GİRİŞ YAP</h2>
+          <div className="bg-[#0f172a] p-10 rounded-[40px] w-full max-w-sm border border-[#1e293b] text-center shadow-2xl">
+            <h2 className="text-4xl font-black mb-6 text-orange-600 uppercase italic">GİRİŞ YAP</h2>
             <form onSubmit={handleLogin} className="grid gap-4">
-              <input type="email" placeholder="E-posta..." className="w-full p-5 bg-[#020617] border-2 border-[#1e293b] rounded-[22px] text-sm text-white" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} required />
+              <input type="email" placeholder="E-posta..." className="w-full p-5 bg-[#020617] border-2 border-[#1e293b] rounded-[22px] text-sm text-white outline-none" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} required />
               <button type="submit" className="p-5 bg-orange-600 text-white rounded-[22px] font-black uppercase">BAĞLANTI GÖNDER</button>
               <button type="button" onClick={() => setIsAuthModalOpen(false)} className="text-[10px] font-black text-slate-500 uppercase">KAPAT</button>
             </form>
@@ -405,33 +461,42 @@ export default function Home() {
 
 function JobCard({ job, toggleFavorite, favorites, onContact, isOwner, isAdmin, onDelete, onBoostClick, onAdminAction, onApprove }: any) {
   return (
-    <div className={`group relative bg-[#0f172a] border-2 p-10 rounded-[50px] transition-all duration-300 shadow-xl ${job.is_featured ? 'border-orange-600 bg-orange-600/5' : 'border-[#1e293b]'}`}>
-      <button onClick={() => toggleFavorite(job.id)} className="absolute top-10 right-10 text-3xl z-10">
+    <div className={`group relative bg-[#0f172a] border-2 p-10 rounded-[50px] transition-all duration-300 shadow-xl overflow-hidden
+      ${job.is_featured ? 'border-orange-600 bg-orange-600/5' : 'border-[#1e293b]'}`}>
+      
+      {job.is_featured && (
+        <div className="flex items-center gap-2 mb-6 bg-orange-600/20 border border-orange-600/30 w-fit px-4 py-2 rounded-2xl">
+          <span className="w-2 h-2 bg-orange-600 rounded-full animate-pulse"></span>
+          <span className="text-[10px] font-black text-orange-500 uppercase italic tracking-widest">VİTRİN 🔥</span>
+        </div>
+      )}
+      
+      <button onClick={() => toggleFavorite(job.id)} className="absolute top-10 right-10 text-3xl hover:scale-125 transition-transform z-10">
         {favorites.includes(job.id) ? '🧡' : '🤍'}
       </button>
 
       <div className="flex flex-col gap-6">
-        <h3 className="text-3xl font-black uppercase italic text-white group-hover:text-orange-500 transition-colors">{job.title}</h3>
+        <h3 className="text-3xl font-black uppercase italic tracking-tighter text-white group-hover:text-orange-500 transition-colors leading-tight">{job.title}</h3>
         <p className="text-slate-200 text-sm leading-relaxed font-medium bg-[#020617]/50 p-5 rounded-[30px] border border-[#1e293b]">{job.description}</p>
 
         <div className="mt-4 pt-8 border-t border-slate-800 flex flex-col gap-4">
           <div className="flex justify-between items-center">
-             <p className="text-4xl font-black text-emerald-400">{job.price_amount}₺</p>
+             <p className="text-4xl font-black text-emerald-400 tracking-tighter">{job.price_amount}₺</p>
              <button onClick={onContact} className="bg-white text-slate-950 px-8 py-4 rounded-2xl font-black text-[11px] uppercase shadow-xl hover:bg-orange-600 hover:text-white transition-all">WHATSAPP</button>
           </div>
 
           <div className="flex flex-wrap gap-2 mt-2">
             {isOwner && !job.is_featured && !job.is_pending && (
-              <button onClick={onBoostClick} className="bg-orange-600/20 text-orange-500 border border-orange-600/50 px-4 py-2 rounded-xl text-[10px] font-black uppercase italic">VİTRİNE ÇIKART 🔥</button>
+              <button onClick={onBoostClick} className="bg-orange-600/20 text-orange-500 border border-orange-600/50 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 hover:text-white transition-all">VİTRİNE ÇIKART 🔥</button>
             )}
             {(isOwner || isAdmin) && (
-              <button onClick={onDelete} className="bg-red-600/20 text-red-500 border border-red-600/50 px-4 py-2 rounded-xl text-[10px] font-black uppercase italic">SİL 🗑️</button>
+              <button onClick={onDelete} className="bg-red-600/20 text-red-500 border border-red-600/50 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-red-600 hover:text-white transition-all">İLANIMI SİL 🗑️</button>
             )}
             {isAdmin && job.is_pending && (
-              <button onClick={onApprove} className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase">ONAYLA ✅</button>
+              <button onClick={onApprove} className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase">ÖDEMEYİ ONAYLA ✅</button>
             )}
             {isAdmin && (
-              <button onClick={onAdminAction} className="bg-slate-800 text-slate-400 px-4 py-2 rounded-xl text-[10px] font-black uppercase italic">ADMİN</button>
+              <button onClick={onAdminAction} className="bg-slate-800 text-slate-400 px-4 py-2 rounded-xl text-[10px] font-black uppercase italic">ADMİN KONTROL</button>
             )}
           </div>
         </div>
