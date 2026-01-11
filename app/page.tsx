@@ -52,21 +52,15 @@ export default function Home() {
     setLoading(false);
   }, []);
 
-  const handleDeleteJob = async (jobId: string) => {
-    if (!confirm("Bu ilanı tamamen kaldırmak istediğine emin misin?")) return;
-    await supabase.from("favorites").delete().eq("job_id", jobId);
-    const { error } = await supabase.from("jobs").delete().eq("id", jobId);
-    if (error) alert("Hata: " + error.message);
-    else { alert("İlan başarıyla silindi."); fetchJobs(); }
-  };
-
   const checkBanStatus = useCallback(async (userId: string) => {
     const { data } = await supabase.from("banned_users").select("user_id").eq("user_id", userId).maybeSingle();
     if (data) setIsBanned(true);
   }, []);
 
+  // BİRLEŞTİRİLMİŞ VE SENKRONİZE EDİLMİŞ EFFECT
   useEffect(() => {
     document.documentElement.classList.add('dark');
+    
     const setup = async () => {
       const { data: { user: currentUser } } = await supabase.auth.getUser();
       if (currentUser) {
@@ -76,9 +70,35 @@ export default function Home() {
         if (favs) setFavorites(favs.map(f => f.job_id));
       }
     };
+
     setup();
     fetchJobs();
+
+    // Giriş/Çıkış Takibi
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN') {
+        // Mailden onaylayıp yeni sekme açıldığında eski sekme de kendini tazeler
+        window.location.reload(); 
+      }
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setFavorites([]);
+        setView('all');
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [fetchJobs, checkBanStatus]);
+
+  const handleDeleteJob = async (jobId: string) => {
+    if (!confirm("Bu ilanı tamamen kaldırmak istediğine emin misin?")) return;
+    await supabase.from("favorites").delete().eq("job_id", jobId);
+    const { error } = await supabase.from("jobs").delete().eq("id", jobId);
+    if (error) alert("Hata: " + error.message);
+    else { alert("İlan başarıyla silindi."); fetchJobs(); }
+  };
 
   const handleAdminAction = async (job: Job) => {
     const action = confirm("YÖNETİCİ SEÇENEĞİ:\n\nTAMAM: Sadece bu ilanı sil.\nİPTAL: Kullanıcıyı BANLA ve tüm ilanlarını sil!");
@@ -219,7 +239,10 @@ export default function Home() {
                           <p className="text-[10px] text-slate-400 font-black uppercase mb-1">Başlangıç Fiyatı</p>
                           <span className="text-4xl font-black text-emerald-400">{job.price_amount}₺</span>
                         </div>
-                        <button onClick={() => window.open(`https://wa.me/${job.phone_number}`, '_blank')} className="bg-white text-black px-10 py-5 rounded-3xl font-black text-xs uppercase hover:bg-orange-600 hover:text-white transition-all shadow-xl">WHATSAPP İLE SOR</button>
+                        <button onClick={() => {
+                          const msg = encodeURIComponent(`Selam, TREND listesindeki "${job.title}" ilanınız için yazıyorum. Detay alabilir miyim?`);
+                          window.open(`https://wa.me/${job.phone_number}?text=${msg}`, '_blank');
+                        }} className="bg-white text-black px-10 py-5 rounded-3xl font-black text-xs uppercase hover:bg-orange-600 hover:text-white transition-all shadow-xl">WHATSAPP İLE SOR</button>
                       </div>
                     </div>
                   </div>
@@ -275,7 +298,10 @@ export default function Home() {
                 onAdminAction={() => handleAdminAction(job)}
                 onApprove={() => handleApproveBoost(job)}
                 onBoostClick={() => { setSelectedJobForBoost(job); setIsPaymentModalOpen(true); }}
-                onContact={() => window.open(`https://wa.me/${job.phone_number}`, '_blank')}
+                onContact={() => {
+                  const msg = encodeURIComponent(`Selam, "${job.title}" ilanınız için yazıyorum. Hala duruyor mu?`);
+                  window.open(`https://wa.me/${job.phone_number}?text=${msg}`, '_blank');
+                }}
               />
             ))
           ) : (
@@ -286,7 +312,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* ÖDEME MODALI - WHATSAPP MESAJI DÜZELTİLDİ */}
+      {/* ÖDEME MODALI */}
       {isPaymentModalOpen && selectedJobForBoost && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl flex items-center justify-center p-4 z-[110]">
           <div className="bg-[#0f172a] p-8 rounded-[40px] w-full max-w-md border-2 border-orange-600 shadow-2xl relative">
